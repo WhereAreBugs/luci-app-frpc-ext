@@ -1,0 +1,11 @@
+{
+	"luci-app-frpc-ext": {
+	"description": "Grant UCI access for luci-app-frpc-ext",
+	"read": {
+		"uci": [ "frpc_ext" ]
+		},
+	"write": {
+		"uci": [ "frpc_ext" ]
+		}
+	}
+}

@@ -1,6 +1,6 @@
-# luci-app-frpc
+# luci-app-frpc-ext
 
-Luci support for Frpc
+Luci support for Frpc (ext)
 
 [![Release Version](https://img.shields.io/github/release/kuoruan/luci-app-frpc.svg)](https://github.com/kuoruan/luci-app-frpc/releases/latest) [![Latest Release Download](https://img.shields.io/github/downloads/kuoruan/luci-app-frpc/latest/total.svg)](https://github.com/kuoruan/luci-app-frpc/releases/latest)
 
@@ -13,7 +13,7 @@ Luci support for Frpc
 3. Install package with opkg:
 
 ```sh
-opkg install luci-app-frpc_*.ipk
+opkg install luci-app-frpc-ext_*.ipk
 ```
 
 For Simplified Chinese, please install ```luci-i18n-zh-cn```.

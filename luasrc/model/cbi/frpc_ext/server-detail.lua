@@ -7,10 +7,10 @@ local m, s, o
 
 local sid = arg[1]
 
-m = Map("frpc", "%s - %s" % { translate("Frpc"), translate("Edit Frps Server") })
-m.redirect = dsp.build_url("admin/services/frpc/servers")
+m = Map("frpc_ext", "%s - %s" % { translate("Frpc"), translate("Edit Frps Server") })
+m.redirect = dsp.build_url("admin/services/frpc-ext/servers")
 
-if m.uci:get("frpc", sid) ~= "server" then
+if m.uci:get("frpc_ext", sid) ~= "server" then
 	luci.http.redirect(m.redirect)
 	return
 end
@@ -31,11 +31,5 @@ o.rmempty = false
 
 o = s:option(Value, "token", translate("Token"))
 o.password = true
-
-o = s:option(Flag, "tcp_mux", translate("TCP mux"))
-o.enabled = "true"
-o.disabled = "false"
-o.defalut = o.enabled
-o.rmempty = false
 
 return m

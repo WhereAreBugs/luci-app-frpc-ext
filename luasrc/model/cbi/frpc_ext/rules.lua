@@ -5,18 +5,18 @@ local dsp = require "luci.dispatcher"
 
 local m, s, o
 
-m = Map("frpc", "%s - %s" % { translate("Frpc"), translate("Proxy Rules") })
+m = Map("frpc_ext", "%s - %s" % { translate("Frpc"), translate("Proxy Rules") })
 
 s = m:section(TypedSection, "rule")
 s.anonymous = true
 s.addremove = true
 s.sortable = true
 s.template = "cbi/tblsection"
-s.extedit = dsp.build_url("admin/services/frpc/rules/%s")
+s.extedit = dsp.build_url("admin/services/frpc-ext/rules/%s")
 function s.create(...)
 	local sid = TypedSection.create(...)
 	if sid then
-		m.uci:save("frpc")
+		m.uci:save("frpc_ext")
 		luci.http.redirect(s.extedit % sid)
 		return
 	end

@@ -1,13 +1,14 @@
 config frpc 'main'
 	option enabled '0'
-	option server 'frps'
-	option client_file '/usr/bin/frpc'
+	list servers 'frps'
+	option client_file '/usr/bin/frpc-ext'
 	option login_fail_exit 'false'
 
 config server 'frps'
+	option alias 'frps'
 	option server_addr '0.0.0.0'
 	option server_port '7000'
-	option tcp_mux 'true'
+	option token ''
 
 config rule 'ssh_proxy'
 	option name 'ssh'

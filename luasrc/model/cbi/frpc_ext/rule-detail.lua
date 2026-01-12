@@ -2,15 +2,29 @@
 -- Licensed to the public under the MIT License.
 
 local dsp = require "luci.dispatcher"
+local uci = require "luci.model.uci".cursor()
 
 local m, s, o
 
 local sid = arg[1]
 
-m = Map("frpc", "%s - %s" % { translate("Frpc"), translate("Edit Proxy Rule") })
-m.redirect = dsp.build_url("admin/services/frpc/rules")
+local server_table = { }
+uci:foreach("frpc_ext", "server", function(s)
+	if s.alias then
+		server_table[s[".name"]] = s.alias
+	elseif s.server_addr and s.server_port then
+		local ip = s.server_addr
+		if s.server_addr:find(":") then
+			ip = "[%s]" % s.server_addr
+		end
+		server_table[s[".name"]] = "%s:%s" % { ip, s.server_port }
+	end
+end)
 
-if m.uci:get("frpc", sid) ~= "rule" then
+m = Map("frpc_ext", "%s - %s" % { translate("Frpc"), translate("Edit Proxy Rule") })
+m.redirect = dsp.build_url("admin/services/frpc-ext/rules")
+
+if m.uci:get("frpc_ext", sid) ~= "rule" then
 	luci.http.redirect(m.redirect)
 	return
 end
@@ -91,10 +105,12 @@ o:depends("plugin", "")
 
 o = s:option(Value, "local_port", translate("Local port"))
 o:depends("plugin", "")
+o.datatype = "port"
 
 o = s:option(Value, "remote_port", translate("Remote port"))
 o:depends("type", "tcp")
 o:depends("type", "udp")
+o.datatype = "port"
 
 o = s:option(Flag, "use_encryption", translate("Use encryption"))
 o.enabled = "true"
@@ -105,6 +121,13 @@ o = s:option(Flag, "use_compression", translate("Use compression"))
 o.enabled = "true"
 o.disabled = "false"
 o.default = o.disabled
+
+o = s:option(MultiValue, "server_names", translate("Server allow list"),
+	translate("If set, this proxy will only register to the selected frps servers"))
+o.widget = "checkbox"
+for k, v in pairs(server_table) do
+	o:value(k, v)
+end
 
 o = s:option(Value, "role", translate("Role"))
 o:depends("type", "stcp")

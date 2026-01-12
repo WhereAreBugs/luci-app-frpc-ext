@@ -9,7 +9,7 @@ local sys = require "luci.sys"
 local m, s, o
 local server_table = { }
 
-uci:foreach("frpc", "server", function(s)
+uci:foreach("frpc_ext", "server", function(s)
 	if s.alias then
 		server_table[s[".name"]] = s.alias
 	elseif s.server_addr and s.server_port then
@@ -22,7 +22,7 @@ uci:foreach("frpc", "server", function(s)
 end)
 
 local function frpc_version()
-	local file = uci:get("frpc", "main", "client_file")
+	local file = uci:get("frpc_ext", "main", "client_file")
 
 	if not file or file == "" or not fs.stat(file) then
 		return "<em style=\"color: red;\">%s</em>" % translate("Invalid client file")
@@ -39,14 +39,14 @@ local function frpc_version()
 	return translatef("Version: %s", version)
 end
 
-m = Map("frpc", "%s - %s" % { translate("Frpc"), translate("Common Settings") },
+m = Map("frpc_ext", "%s - %s" % { translate("Frpc"), translate("Common Settings") },
 "<p>%s</p><p>%s</p>" % {
 	translate("Frp is a fast reverse proxy to help you expose a local server behind a NAT or firewall to the internet."),
 	translatef("For more information, please visit: %s",
 		"<a href=\"https://github.com/fatedier/frp\" target=\"_blank\">https://github.com/fatedier/frp</a>")
 })
 
-m:append(Template("frpc/status_header"))
+m:append(Template("frpc_ext/status_header"))
 
 s = m:section(NamedSection, "main", "frpc")
 s.addremove = false
@@ -62,8 +62,8 @@ o = s:taboption("general", Value, "client_file", translate("Client file"), frpc_
 o.datatype = "file"
 o.rmempty = false
 
-o = s:taboption("general", ListValue, "server", translate("Server"))
-o:value("", translate("None"))
+o = s:taboption("general", MultiValue, "servers", translate("Servers"))
+o.widget = "checkbox"
 for k, v in pairs(server_table) do
 	o:value(k, v)
 end
@@ -105,6 +105,36 @@ o = s:taboption("advanced", Value, "pool_count", translate("Pool count"),
 o.datatype = "uinteger"
 o.defalut = '0'
 o.placeholder = '0'
+
+o = s:taboption("advanced", Flag, "tcp_mux", translate("TCP mux"),
+	translate("Enable TCP stream multiplexing between frpc and frps"))
+o.enabled = "true"
+o.disabled = "false"
+o.default = o.enabled
+o.rmempty = false
+
+o = s:taboption("advanced", Value, "tcp_mux_session_count", translate("TCP mux session count"),
+	translate("Number of underlying TCP connections when tcpMux is enabled (e.g. 8 or 16)"))
+o.datatype = "uinteger"
+o.placeholder = "8"
+
+o = s:taboption("advanced", ListValue, "tcp_mux_link_probe_mode", translate("TCP mux link probe mode"),
+	translate("Select how to estimate per-link quality among TCP mux sessions"))
+o:value("disabled", translate("Disabled"))
+o:value("passive", translate("Passive"))
+o:value("active", translate("Active"))
+o:value("auto", translate("Auto"))
+o.default = "auto"
+
+o = s:taboption("advanced", Value, "tcp_mux_link_probe_interval", translate("TCP mux link probe interval (s)"),
+	translate("Probe interval in seconds, 0 means disabled"))
+o.datatype = "uinteger"
+o.placeholder = "0"
+
+o = s:taboption("advanced", Value, "tcp_mux_link_probe_timeout", translate("TCP mux link probe timeout (s)"),
+	translate("Probe timeout in seconds"))
+o.datatype = "uinteger"
+o.placeholder = "3"
 
 o = s:taboption("advanced", Value, "user", translate("Proxy user"),
 	translate("Your proxy name will be changed to {user}.{proxy}"))

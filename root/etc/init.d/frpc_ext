@@ -1,0 +1,517 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright 2019 Xingwang Liao <kuoruan@gmail.com>
+# Licensed to the public under the MIT License.
+#
+
+START=99
+USE_PROCD=1
+
+NAME="frpc_ext"
+CONFIG_FOLDER="/var/etc/$NAME"
+
+_log() {
+	local level="$1" ; shift
+	local msg="$*"
+	logger -p "daemon.$level" -t "$NAME" "$msg"
+	echo "[$level] $msg" >&2
+}
+
+_info() {
+	_log "info" "$@"
+}
+
+_err() {
+	_log "err" "$@"
+}
+
+frpc_scetion_validate() {
+	uci_validate_section "$NAME" "frpc" "$1" \
+		'enabled:bool:0' \
+		'client_file:file:/usr/bin/frpc-ext' \
+		'server:uci("frpc_ext", "@server")' \
+		'servers:list(string)' \
+		'run_user:string' \
+		'enable_logging:bool:0' \
+		'log_file:string:/var/log/frpc.log' \
+		'log_level:or("trace", "debug", "info", "warn", "error"):warn' \
+		'log_max_days:uinteger:3' \
+		'disable_log_color:or("true", "false")' \
+		'pool_count:uinteger:0' \
+		'tcp_mux:or("true", "false"):true' \
+		'tcp_mux_session_count:uinteger:1' \
+		'tcp_mux_link_probe_mode:or("disabled","passive","active","auto"):auto' \
+		'tcp_mux_link_probe_interval:uinteger:0' \
+		'tcp_mux_link_probe_timeout:uinteger:3' \
+		'user:string' \
+		'login_fail_exit:or("true", "false"):true' \
+		'protocol:or("tcp", "kcp", "websocket", "quic"):tcp' \
+		'http_proxy:string' \
+		'tls_enable:or("true", "false")' \
+		'dns_server:host' \
+		'heartbeat_interval:uinteger:30' \
+		'heartbeat_timeout:uinteger:90' \
+		'admin_addr:host' \
+		'admin_port:port' \
+		'admin_user:string' \
+		'admin_pwd:string'
+}
+
+server_section_validate() {
+	uci_validate_section "$NAME" "server" "$1" \
+		'alias:string' \
+		'server_addr:host' \
+		'server_port:port' \
+		'token:string'
+}
+
+rule_section_validate() {
+	uci_validate_section "$NAME" "rule" "$1" \
+		'disabled:bool:0' \
+		'name:string' \
+		'type:or("tcp", "udp", "http", "https", "stcp", "xtcp")' \
+		'plugin:string' \
+		'plugin_unix_path:file' \
+		'plugin_user:string' \
+		'plugin_passwd:string' \
+		'plugin_local_path:file' \
+		'plugin_strip_prefix:string' \
+		'plugin_http_user:string' \
+		'plugin_http_passwd:string' \
+		'plugin_local_addr:string' \
+		'plugin_crt_path:file' \
+		'plugin_key_path:file' \
+		'plugin_host_header_rewrite:string' \
+		'local_ip:host' \
+		'local_port:port' \
+		'remote_port:port' \
+		'use_encryption:or("true", "false"):false' \
+		'use_compression:or("true", "false"):false' \
+		'role:string' \
+		'server_name:string' \
+		'sk:string' \
+		'bind_addr:host' \
+		'bind_port:port' \
+		'http_user:string' \
+		'http_pwd:string' \
+		'subdomain:string' \
+		'custom_domains:string' \
+		'locations:string' \
+		'host_header_rewrite:string' \
+		'proxy_protocol_version:or("v1", "v2")' \
+		'group:string' \
+		'group_key:string' \
+		'health_check_type:or("tcp", "http")' \
+		'health_check_url:string' \
+		'health_check_timeout_s:uinteger' \
+		'health_check_max_failed:uinteger' \
+		'health_check_interval_s:uinteger' \
+		'server_names:list(string)' \
+		'extra_options:list(string)'
+}
+
+client_file_validate() {
+	local file="$1"
+
+	test -f "$file" || return 1
+	test -x "$file" || chmod 755 "$file"
+
+	eval "$file" -h 2>/dev/null | grep -q "frpc"
+	return $?
+}
+
+add_rule_extra_option() {
+	# Stored as raw TOML assignment lines (advanced usage).
+	# Example: transport.bandwidthLimit = "10MB"
+	printf "%s\n" "$1" >>"$2"
+}
+
+_toml_escape() {
+	echo "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+_toml_quote() {
+	printf "\"%s\"" "$(_toml_escape "$1")"
+}
+
+_toml_kv_string() {
+	local file="$1"
+	local key="$2"
+	local val="$3"
+	[ -n "$val" ] && printf "%s = %s\n" "$key" "$(_toml_quote "$val")" >>"$file"
+}
+
+_toml_kv_int() {
+	local file="$1"
+	local key="$2"
+	local val="$3"
+	[ -n "$val" ] && printf "%s = %s\n" "$key" "$val" >>"$file"
+}
+
+_toml_kv_bool() {
+	local file="$1"
+	local key="$2"
+	local val="$3"
+	[ -z "$val" ] && return 0
+	if [ "x$val" = "xtrue" ] || [ "x$val" = "x1" ] ; then
+		printf "%s = true\n" "$key" >>"$file"
+	else
+		printf "%s = false\n" "$key" >>"$file"
+	fi
+}
+
+_toml_collect_array_item() {
+	local item="$1"
+	[ -z "$item" ] && return 0
+	if [ -n "$_TOML_ARRAY_OUT" ] ; then
+		_TOML_ARRAY_OUT="$_TOML_ARRAY_OUT, $(_toml_quote "$item")"
+	else
+		_TOML_ARRAY_OUT="$(_toml_quote "$item")"
+	fi
+}
+
+_append_toml_string_array_from_list() {
+	local section="$1"
+	local option="$2"
+	local file="$3"
+	local key="$4"
+
+	_TOML_ARRAY_OUT=""
+	config_list_foreach "$section" "$option" _toml_collect_array_item
+	[ -n "$_TOML_ARRAY_OUT" ] && printf "%s = [%s]\n" "$key" "$_TOML_ARRAY_OUT" >>"$file"
+}
+
+_append_toml_string_array_from_csv() {
+	local csv="$1"
+	local file="$2"
+	local key="$3"
+	local item
+
+	[ -z "$csv" ] && return 0
+
+	_TOML_ARRAY_OUT=""
+	local IFS=','
+	for item in $csv ; do
+		item="$(echo "$item" | sed 's/^ *//; s/ *$//')"
+		_toml_collect_array_item "$item"
+	done
+	[ -n "$_TOML_ARRAY_OUT" ] && printf "%s = [%s]\n" "$key" "$_TOML_ARRAY_OUT" >>"$file"
+}
+
+add_frpc_rule() {
+	local section="$1"
+	local proxies_file="$2"
+	local visitors_file="$3"
+
+	if ! rule_section_validate "$section" ; then
+		_err "Rule section validate failed: \"$section\""
+		return 1
+	fi
+	[ "x$disabled" = "x1" ] && return 0
+
+	if [ -z "$name" ] ; then
+		_err "Rule's name is required: \"$section\""
+		return 1
+	fi
+
+	# Legacy stcp/xtcp can be mapped to v1 visitors by role=visitor.
+	if { [ "x$type" = "xstcp" ] || [ "x$type" = "xxtcp" ]; } && [ "x$role" = "xvisitor" ] ; then
+		FRPC_VISITOR_COUNT=$((FRPC_VISITOR_COUNT + 1))
+		echo "[[visitors]]" >>"$visitors_file"
+		_toml_kv_string "$visitors_file" "name" "$name"
+		_toml_kv_string "$visitors_file" "type" "$type"
+		_toml_kv_string "$visitors_file" "serverName" "$server_name"
+		_toml_kv_string "$visitors_file" "secretKey" "$sk"
+		_toml_kv_string "$visitors_file" "bindAddr" "$bind_addr"
+		_toml_kv_int "$visitors_file" "bindPort" "$bind_port"
+		_toml_kv_bool "$visitors_file" "transport.useEncryption" "$use_encryption"
+		_toml_kv_bool "$visitors_file" "transport.useCompression" "$use_compression"
+		config_list_foreach "$section" "extra_options" add_rule_extra_option "$visitors_file"
+		echo "" >>"$visitors_file"
+		return 0
+	fi
+
+	echo "[[proxies]]" >>"$proxies_file"
+	_toml_kv_string "$proxies_file" "name" "$name"
+	_toml_kv_string "$proxies_file" "type" "$type"
+
+	if [ -n "$plugin" ] ; then
+		_toml_kv_string "$proxies_file" "plugin.type" "$plugin"
+		case "$plugin" in
+			unix_domain_socket)
+				_toml_kv_string "$proxies_file" "plugin.unixPath" "$plugin_unix_path"
+				;;
+			socks5)
+				_toml_kv_string "$proxies_file" "plugin.username" "$plugin_user"
+				_toml_kv_string "$proxies_file" "plugin.password" "$plugin_passwd"
+				;;
+			http_proxy)
+				_toml_kv_string "$proxies_file" "plugin.httpUser" "$plugin_http_user"
+				_toml_kv_string "$proxies_file" "plugin.httpPassword" "$plugin_http_passwd"
+				;;
+			static_file)
+				_toml_kv_string "$proxies_file" "plugin.localPath" "$plugin_local_path"
+				_toml_kv_string "$proxies_file" "plugin.stripPrefix" "$plugin_strip_prefix"
+				_toml_kv_string "$proxies_file" "plugin.httpUser" "$plugin_http_user"
+				_toml_kv_string "$proxies_file" "plugin.httpPassword" "$plugin_http_passwd"
+				;;
+			https2http)
+				_toml_kv_string "$proxies_file" "plugin.localAddr" "$plugin_local_addr"
+				_toml_kv_string "$proxies_file" "plugin.crtPath" "$plugin_crt_path"
+				_toml_kv_string "$proxies_file" "plugin.keyPath" "$plugin_key_path"
+				_toml_kv_string "$proxies_file" "plugin.hostHeaderRewrite" "$plugin_host_header_rewrite"
+				;;
+		esac
+	else
+		_toml_kv_string "$proxies_file" "localIP" "$local_ip"
+		_toml_kv_int "$proxies_file" "localPort" "$local_port"
+	fi
+
+	_toml_kv_bool "$proxies_file" "transport.useEncryption" "$use_encryption"
+	_toml_kv_bool "$proxies_file" "transport.useCompression" "$use_compression"
+	_toml_kv_string "$proxies_file" "transport.proxyProtocolVersion" "$proxy_protocol_version"
+
+	_toml_kv_string "$proxies_file" "loadBalancer.group" "$group"
+	_toml_kv_string "$proxies_file" "loadBalancer.groupKey" "$group_key"
+
+	_append_toml_string_array_from_list "$section" "server_names" "$proxies_file" "serverNames"
+
+	if [ "x$type" = "xtcp" ] || [ "x$type" = "xstcp" ] ; then
+		_toml_kv_string "$proxies_file" "secretKey" "$sk"
+	fi
+
+	if [ "x$type" = "xtcp" ] || [ "x$type" = "xstcp" ] ; then
+		:
+	elif [ "x$type" = "tcp" ] || [ "x$type" = "udp" ] ; then
+		_toml_kv_int "$proxies_file" "remotePort" "$remote_port"
+	fi
+
+	if [ "x$type" = "http" ] || [ "x$type" = "https" ] ; then
+		_toml_kv_string "$proxies_file" "subdomain" "$subdomain"
+		_append_toml_string_array_from_csv "$custom_domains" "$proxies_file" "customDomains"
+		_toml_kv_string "$proxies_file" "hostHeaderRewrite" "$host_header_rewrite"
+	fi
+	if [ "x$type" = "http" ] ; then
+		_append_toml_string_array_from_csv "$locations" "$proxies_file" "locations"
+		_toml_kv_string "$proxies_file" "httpUser" "$http_user"
+		_toml_kv_string "$proxies_file" "httpPassword" "$http_pwd"
+	fi
+
+	if [ -n "$health_check_type" ] ; then
+		_toml_kv_string "$proxies_file" "healthCheck.type" "$health_check_type"
+		_toml_kv_int "$proxies_file" "healthCheck.timeoutSeconds" "$health_check_timeout_s"
+		_toml_kv_int "$proxies_file" "healthCheck.maxFailed" "$health_check_max_failed"
+		_toml_kv_int "$proxies_file" "healthCheck.intervalSeconds" "$health_check_interval_s"
+		_toml_kv_string "$proxies_file" "healthCheck.path" "$health_check_url"
+	fi
+
+	config_list_foreach "$section" "extra_options" add_rule_extra_option "$proxies_file"
+	echo "" >>"$proxies_file"
+}
+
+create_config_file() {
+	local config_file="$1"
+	shift
+	local servers="$@"
+	local server_count="$#"
+
+	local tmp_file
+	local tmp_proxies
+	local tmp_visitors
+	tmp_file="$(mktemp /tmp/frpc_ext-XXXXXX)"
+	tmp_proxies="$(mktemp /tmp/frpc_ext-proxies-XXXXXX)"
+	tmp_visitors="$(mktemp /tmp/frpc_ext-visitors-XXXXXX)"
+
+	FRPC_VISITOR_COUNT=0
+	config_foreach add_frpc_rule "rule" "$tmp_proxies" "$tmp_visitors"
+
+	if [ "$server_count" -gt 1 ] && [ "$FRPC_VISITOR_COUNT" -gt 0 ] ; then
+		_err "Visitors are not supported in multi-frps mode yet, please keep only one server selected."
+		rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+		return 1
+	fi
+
+	# Validate the first server and use it as default serverAddr/serverPort/auth.token.
+	local first_server="$1"
+	if ! server_section_validate "$first_server" ; then
+		_err "Server config validate failed: \"$first_server\""
+		rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+		return 1
+	fi
+	local first_server_addr="$server_addr"
+	local first_server_port="$server_port"
+	local first_token="$token"
+
+	# Root keys.
+	_toml_kv_string "$tmp_file" "serverAddr" "$first_server_addr"
+	_toml_kv_int "$tmp_file" "serverPort" "$first_server_port"
+	_toml_kv_string "$tmp_file" "user" "$user"
+	_toml_kv_bool "$tmp_file" "loginFailExit" "$login_fail_exit"
+	_toml_kv_string "$tmp_file" "dnsServer" "$dns_server"
+	echo "" >>"$tmp_file"
+
+	# Auth.
+	echo "[auth]" >>"$tmp_file"
+	echo "method = \"token\"" >>"$tmp_file"
+	[ -n "$first_token" ] && _toml_kv_string "$tmp_file" "token" "$first_token"
+	echo "" >>"$tmp_file"
+
+	# Multi-frps endpoints.
+	if [ "$server_count" -gt 1 ] ; then
+		if [ -n "$admin_port" ] && [ "$admin_port" -gt 0 ] ; then
+			_err "Admin port is not supported in multi-frps mode yet, please set Admin port to 0."
+			rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+			return 1
+		fi
+
+		echo "servers = [" >>"$tmp_file"
+		local sid
+		for sid in $servers ; do
+			if ! server_section_validate "$sid" ; then
+				_err "Server config validate failed: \"$sid\""
+				rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+				return 1
+			fi
+
+			printf "  { name=%s, addr=%s, port=%s" \
+				"$(_toml_quote "$sid")" \
+				"$(_toml_quote "$server_addr")" \
+				"$server_port" >>"$tmp_file"
+			[ -n "$token" ] && printf ", token=%s" "$(_toml_quote "$token")" >>"$tmp_file"
+			printf " },\n" >>"$tmp_file"
+		done
+		echo "]" >>"$tmp_file"
+		echo "" >>"$tmp_file"
+	fi
+
+	# Log.
+	echo "[log]" >>"$tmp_file"
+	if [ "x$enable_logging" = "x1" ] ; then
+		[ -z "$log_file" ] && log_file="/var/log/frpc.log"
+		_toml_kv_string "$tmp_file" "to" "$log_file"
+		_toml_kv_string "$tmp_file" "level" "$log_level"
+		_toml_kv_int "$tmp_file" "maxDays" "$log_max_days"
+		_toml_kv_bool "$tmp_file" "disablePrintColor" "$disable_log_color"
+
+		if [ -f "$log_file" ] ; then
+			echo > "$log_file"
+		else
+			local log_folder
+			log_folder="$(dirname "$log_file")"
+			test -d "$log_folder" || mkdir -p "$log_folder"
+		fi
+
+		if [ -n "$run_user" ] && ( user_exists "$run_user" ) ; then
+			chmod 644 "$log_file"
+			chown "$run_user" "$log_file"
+		else
+			run_user=""
+		fi
+	else
+		_toml_kv_string "$tmp_file" "to" "console"
+	fi
+	echo "" >>"$tmp_file"
+
+	# Transport.
+	echo "[transport]" >>"$tmp_file"
+	_toml_kv_string "$tmp_file" "protocol" "$protocol"
+	_toml_kv_int "$tmp_file" "poolCount" "$pool_count"
+	_toml_kv_bool "$tmp_file" "tcpMux" "$tcp_mux"
+	_toml_kv_int "$tmp_file" "tcpMuxSessionCount" "$tcp_mux_session_count"
+	_toml_kv_string "$tmp_file" "tcpMuxLinkProbeMode" "$tcp_mux_link_probe_mode"
+	_toml_kv_int "$tmp_file" "tcpMuxLinkProbeInterval" "$tcp_mux_link_probe_interval"
+	_toml_kv_int "$tmp_file" "tcpMuxLinkProbeTimeout" "$tcp_mux_link_probe_timeout"
+	_toml_kv_int "$tmp_file" "heartbeatInterval" "$heartbeat_interval"
+	_toml_kv_int "$tmp_file" "heartbeatTimeout" "$heartbeat_timeout"
+	_toml_kv_string "$tmp_file" "proxyURL" "$http_proxy"
+	_toml_kv_bool "$tmp_file" "tls.enable" "$tls_enable"
+	echo "" >>"$tmp_file"
+
+	# Admin / webServer.
+	echo "[webServer]" >>"$tmp_file"
+	_toml_kv_string "$tmp_file" "addr" "$admin_addr"
+	_toml_kv_int "$tmp_file" "port" "$admin_port"
+	_toml_kv_string "$tmp_file" "user" "$admin_user"
+	_toml_kv_string "$tmp_file" "password" "$admin_pwd"
+	echo "" >>"$tmp_file"
+
+	cat "$tmp_proxies" >>"$tmp_file"
+	cat "$tmp_visitors" >>"$tmp_file"
+
+	cat "$tmp_file" >"$config_file"
+	local rc="$?"
+	rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+	return "$rc"
+}
+
+_collect_server() {
+	local sid="$1"
+	[ -z "$sid" ] && return 0
+	if [ -n "$FRPC_EXT_SERVERS" ] ; then
+		FRPC_EXT_SERVERS="$FRPC_EXT_SERVERS $sid"
+	else
+		FRPC_EXT_SERVERS="$sid"
+	fi
+}
+
+start_instance() {
+	local section="$1"
+
+	if ! frpc_scetion_validate "$section" ; then
+		_err "Config validate failed."
+		return 1
+	fi
+	if [ "x$enabled" != "x1" ] ; then
+		_info "Instance \"$section\" disabled."
+		return 1
+	fi
+	if [ -z "$client_file" ] || ( ! client_file_validate "$client_file" ) ; then
+		_err "Client file not valid."
+		return 1
+	fi
+
+	FRPC_EXT_SERVERS=""
+	config_list_foreach "$section" "servers" _collect_server
+	if [ -z "$FRPC_EXT_SERVERS" ] && [ -n "$server" ] && [ "$server" != "nil" ] ; then
+		FRPC_EXT_SERVERS="$server"
+	fi
+	if [ -z "$FRPC_EXT_SERVERS" ] ; then
+		_err "No server(s) selected for instance: \"$section\"."
+		return 1
+	fi
+
+	local sid
+	for sid in $FRPC_EXT_SERVERS ; do
+		if [ "$(uci -q get $NAME.$sid)" != "server" ] ; then
+			_err "Server section not found: \"$sid\""
+			return 1
+		fi
+	done
+
+	test -d "$CONFIG_FOLDER" || mkdir -p "$CONFIG_FOLDER"
+	local config_file="$CONFIG_FOLDER/frpc.$section.toml"
+
+	if ! create_config_file "$config_file" $FRPC_EXT_SERVERS ; then
+		_err "Could not create config file: \"$config_file\""
+		return 1
+	fi
+
+	procd_open_instance "$NAME.$section"
+	procd_set_param command "$client_file"
+	procd_append_param command -c "$config_file"
+	procd_set_param respawn
+	procd_set_param file "$config_file"
+
+	[ -n "$run_user" ] && procd_set_param user "$run_user"
+
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger "$NAME"
+}
+
+start_service() {
+	config_load "$NAME"
+	config_foreach start_instance "frpc"
+}
