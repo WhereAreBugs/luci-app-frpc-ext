@@ -172,6 +172,10 @@ o = s:taboption("advanced", Value, "heartbeat_timeout", translate("Heartbeat tim
 o.datatype = "uinteger"
 o.placeholder = "90"
 
+o = s:taboption("advanced", Value, "virtual_net_address", translate("VirtualNet address"),
+	translate("Experimental: virtualNet.address (requires exactly one frps server)"))
+o.placeholder = "100.86.1.1/24"
+
 o = s:taboption("manage", Value, "admin_addr", translate("Admin addr"))
 o.datatype = "host"
 

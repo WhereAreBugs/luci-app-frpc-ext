@@ -129,13 +129,24 @@ for k, v in pairs(server_table) do
 	o:value(k, v)
 end
 
-o = s:option(Value, "role", translate("Role"))
+o = s:option(ListValue, "role", translate("Role"))
+o:value("", translate("-- default --"))
+o:value("visitor", translate("Visitor"))
+o:value("server", translate("Server"))
 o:depends("type", "stcp")
 o:depends("type", "xtcp")
 
 o = s:option(Value, "server_name", translate("Server name"))
 o:depends("type", "stcp")
 o:depends("type", "xtcp")
+
+o = s:option(ListValue, "frps_name", translate("Bind to frps"),
+	translate("Required when using multi-frps mode (multiple servers selected)"))
+o:value("")
+for k, v in pairs(server_table) do
+	o:value(k, v)
+end
+o:depends("role", "visitor")
 
 o = s:option(Value, "sk", translate("SK"))
 o.password = true

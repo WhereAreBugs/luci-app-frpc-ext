@@ -51,6 +51,7 @@ frpc_scetion_validate() {
 		'dns_server:host' \
 		'heartbeat_interval:uinteger:30' \
 		'heartbeat_timeout:uinteger:90' \
+		'virtual_net_address:string' \
 		'admin_addr:host' \
 		'admin_port:port' \
 		'admin_user:string' \
@@ -89,6 +90,7 @@ rule_section_validate() {
 		'use_compression:or("true", "false"):false' \
 		'role:string' \
 		'server_name:string' \
+		'frps_name:string' \
 		'sk:string' \
 		'bind_addr:host' \
 		'bind_port:port' \
@@ -221,6 +223,13 @@ add_frpc_rule() {
 		_toml_kv_string "$visitors_file" "name" "$name"
 		_toml_kv_string "$visitors_file" "type" "$type"
 		_toml_kv_string "$visitors_file" "serverName" "$server_name"
+		if [ "x$FRPC_MULTI_FRPS" = "x1" ] ; then
+			if [ -z "$frps_name" ] ; then
+				FRPC_VISITOR_MISSING_FRPS=$((FRPC_VISITOR_MISSING_FRPS + 1))
+			else
+				_toml_kv_string "$visitors_file" "frpsName" "$frps_name"
+			fi
+		fi
 		_toml_kv_string "$visitors_file" "secretKey" "$sk"
 		_toml_kv_string "$visitors_file" "bindAddr" "$bind_addr"
 		_toml_kv_int "$visitors_file" "bindPort" "$bind_port"
@@ -322,11 +331,30 @@ create_config_file() {
 	tmp_proxies="$(mktemp /tmp/frpc_ext-proxies-XXXXXX)"
 	tmp_visitors="$(mktemp /tmp/frpc_ext-visitors-XXXXXX)"
 
+	FRPC_MULTI_FRPS=0
+	FRPC_MULTI_SERVER_IDS=""
 	FRPC_VISITOR_COUNT=0
+	FRPC_VISITOR_MISSING_FRPS=0
+	
+	if [ "$server_count" -gt 1 ] ; then
+		FRPC_MULTI_FRPS=1
+		FRPC_MULTI_SERVER_IDS="$servers"
+	fi
+
 	config_foreach add_frpc_rule "rule" "$tmp_proxies" "$tmp_visitors"
 
-	if [ "$server_count" -gt 1 ] && [ "$FRPC_VISITOR_COUNT" -gt 0 ] ; then
-		_err "Visitors are not supported in multi-frps mode yet, please keep only one server selected."
+	if [ "$server_count" -gt 1 ] && [ -n "$virtual_net_address" ] ; then
+		_err "virtualNet requires selecting exactly one frps server (multi-frps mode is not supported)."
+		rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+		return 1
+	fi
+	if [ "$server_count" -gt 1 ] && [ -n "$admin_port" ] && [ "$admin_port" -gt 0 ] ; then
+		_err "webServer (admin) requires selecting exactly one frps server (multi-frps mode is not supported)."
+		rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
+		return 1
+	fi
+	if [ "$server_count" -gt 1 ] && [ "$FRPC_VISITOR_MISSING_FRPS" -gt 0 ] ; then
+		_err "Visitors in multi-frps mode must set 'frps_name' to bind exactly one frps."
 		rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
 		return 1
 	fi
@@ -350,6 +378,13 @@ create_config_file() {
 	_toml_kv_string "$tmp_file" "dnsServer" "$dns_server"
 	echo "" >>"$tmp_file"
 
+	# virtualNet (experimental)
+	if [ -n "$virtual_net_address" ] ; then
+		printf "featureGates = { VirtualNet = true }\n" >>"$tmp_file"
+		_toml_kv_string "$tmp_file" "virtualNet.address" "$virtual_net_address"
+		echo "" >>"$tmp_file"
+	fi
+
 	# Auth.
 	echo "[auth]" >>"$tmp_file"
 	echo "method = \"token\"" >>"$tmp_file"
@@ -358,12 +393,6 @@ create_config_file() {
 
 	# Multi-frps endpoints.
 	if [ "$server_count" -gt 1 ] ; then
-		if [ -n "$admin_port" ] && [ "$admin_port" -gt 0 ] ; then
-			_err "Admin port is not supported in multi-frps mode yet, please set Admin port to 0."
-			rm -f "$tmp_file" "$tmp_proxies" "$tmp_visitors"
-			return 1
-		fi
-
 		echo "servers = [" >>"$tmp_file"
 		local sid
 		for sid in $servers ; do
