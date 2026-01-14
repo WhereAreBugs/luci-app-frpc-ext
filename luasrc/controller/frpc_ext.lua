@@ -4,6 +4,7 @@
 local http = require "luci.http"
 local uci = require "luci.model.uci".cursor()
 local sys = require "luci.sys"
+local nixio = require "nixio"
 
 module("luci.controller.frpc_ext", package.seeall)
 
