@@ -28,6 +28,32 @@ o.rmempty = false
 o = s:option(Value, "server_port", translate("Server port"))
 o.datatype = "port"
 o.rmempty = false
+o.description = translate("Legacy port for TCP; if multi-protocol ports below are set, this is used as fallback.")
+
+o = s:option(Value, "tcp_port", translate("TCP port"))
+o.datatype = "port"
+o.placeholder = "7000"
+o.description = translate("TCP control / work connection port for this frps.")
+
+o = s:option(Value, "kcp_port", translate("KCP port"))
+o.datatype = "port"
+o.placeholder = "7000"
+o.description = translate("KCP port; frpc will open an extra KCP connection if set.")
+
+o = s:option(Value, "quic_port", translate("QUIC port"))
+o.datatype = "port"
+o.placeholder = "7000"
+o.description = translate("QUIC port; frpc will open an extra QUIC connection if set.")
+
+o = s:option(Value, "websocket_port", translate("WebSocket port"))
+o.datatype = "port"
+o.placeholder = "7000"
+o.description = translate("WebSocket port; frpc will open an extra WebSocket connection if set.")
+
+o = s:option(Value, "wss_port", translate("WSS port"))
+o.datatype = "port"
+o.placeholder = "7001"
+o.description = translate("Secure WebSocket (wss) port; frpc will open an extra WSS connection if set.")
 
 o = s:option(Value, "token", translate("Token"))
 o.password = true

@@ -57,16 +57,19 @@ s:tab("advanced", translate("Advanced Options"))
 s:tab("manage", translate("Manage Options"))
 
 o = s:taboption("general", Flag, "enabled", translate("Enabled"))
+o.description = translate("Enable frpc service at boot and keep it running.")
 
 o = s:taboption("general", Value, "client_file", translate("Client file"), frpc_version())
 o.datatype = "file"
 o.rmempty = false
+o.description = translate("Path to the frpc binary; used for version checks and startup.")
 
 o = s:taboption("general", MultiValue, "servers", translate("Servers"))
 o.widget = "checkbox"
 for k, v in pairs(server_table) do
 	o:value(k, v)
 end
+o.description = translate("Select frps servers to register; leave empty to use all defined servers.")
 
 o = s:taboption("general", ListValue, "run_user", translate("Run daemon as user"))
 o:value("", translate("-- default --"))
@@ -74,12 +77,15 @@ local user
 for user in util.execi("cat /etc/passwd | cut -d':' -f1") do
 	o:value(user)
 end
+o.description = translate("Run frpc under this system user (drops privileges after start).")
 
 o = s:taboption("general", Flag, "enable_logging", translate("Enable logging"))
+o.description = translate("Write frpc logs to a file.")
 
 o = s:taboption("general", Value, "log_file", translate("Log file"))
 o:depends("enable_logging", "1")
 o.placeholder = "/var/log/frpc.log"
+o.description = translate("Log output path; default is /var/log/frpc.log.")
 
 o = s:taboption("general", ListValue, "log_level", translate("Log level"))
 o:depends("enable_logging", "1")
@@ -89,19 +95,22 @@ o:value("info", translate("Info"))
 o:value("warn", translate("Warn"))
 o:value("error", translate("Error"))
 o.default = "warn"
+o.description = translate("Minimum severity written to the log.")
 
 o = s:taboption("general", Value, "log_max_days", translate("Log max days"))
 o:depends("enable_logging", "1")
 o.datatype = "uinteger"
 o.placeholder = '3'
+o.description = translate("Rotate or delete logs after N days; 0 keeps all logs.")
 
 o = s:taboption("general", Value, "disable_log_color", translate("Disable log color"))
 o:depends("enable_logging", "1")
 o.enabled = "true"
 o.disabled = "false"
+o.description = translate("Strip ANSI color codes from log output.")
 
 o = s:taboption("advanced", Value, "pool_count", translate("Pool count"),
-	translate("Connections will be established in advance, default value is zero"))
+	translate("Work connection pool size (pre-established connections); 0 disables preallocation."))
 o.datatype = "uinteger"
 o.defalut = '0'
 o.placeholder = '0'
@@ -152,6 +161,7 @@ o:value("kcp", "KCP")
 o:value("websocket", "Websocket")
 o:value("quic", "quic")
 o.default = "tcp"
+o.description = translate("Main control/work connection protocol. With multi-port servers, frpc still opens extra ports (tcp/kcp/quic/websocket/wss) if configured.")
 
 o = s:taboption("advanced", Value, "http_proxy", translate("HTTP proxy"),
 	translate("Connect frps by http proxy or socks5 proxy, format: [protocol]://[user]:[passwd]@[ip]:[port]"))

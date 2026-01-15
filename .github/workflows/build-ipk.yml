@@ -1,0 +1,80 @@
+name: build-ipk
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ "*" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      OPENWRT_VERSION: 23.05.5
+      TARGET: x86
+      SUBTARGET: 64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive package metadata
+        id: vars
+        run: |
+          PKG_NAME=$(grep -oE '^PKG_NAME:=.*' Makefile | cut -d= -f2)
+          PKG_VERSION=$(grep -oE '^PKG_VERSION:=.*' Makefile | cut -d= -f2 || true)
+          ART_NAME="${PKG_NAME}-${PKG_VERSION:-${GITHUB_SHA::7}}"
+          echo "PKG_NAME=${PKG_NAME}" >>"$GITHUB_OUTPUT"
+          echo "PKG_VERSION=${PKG_VERSION}" >>"$GITHUB_OUTPUT"
+          echo "ART_NAME=${ART_NAME}" >>"$GITHUB_OUTPUT"
+
+      - name: Download OpenWrt SDK
+        run: |
+          SDK_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}/${SUBTARGET}/openwrt-sdk-${OPENWRT_VERSION}-${TARGET}-${SUBTARGET}_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
+          mkdir -p sdk
+          curl -fL --retry 5 "$SDK_URL" | tar -xJ -C sdk --strip-components=1
+
+      - name: Use GitHub mirrors for feeds
+        working-directory: sdk
+        run: |
+          sed -i 's|https://git.openwrt.org/openwrt/openwrt.git|https://github.com/openwrt/openwrt.git|g' feeds.conf.default || true
+          sed -i 's|https://git.openwrt.org/feed/packages.git|https://github.com/openwrt/packages.git|g' feeds.conf.default || true
+          sed -i 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' feeds.conf.default || true
+
+      - name: Update and install feeds
+        working-directory: sdk
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Drop package into SDK
+        run: |
+          PKG_NAME="${{ steps.vars.outputs.PKG_NAME }}"
+          mkdir -p "sdk/package/${PKG_NAME}"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='bin' \
+            --exclude='*.ipk' \
+            ./ "sdk/package/${PKG_NAME}"
+
+      - name: Build package
+        working-directory: sdk
+        run: |
+          PKG_NAME="${{ steps.vars.outputs.PKG_NAME }}"
+          make defconfig
+          make package/${PKG_NAME}/compile -j"$(nproc)" V=s
+
+      - name: Collect artifacts
+        run: |
+          PKG_NAME="${{ steps.vars.outputs.PKG_NAME }}"
+          mkdir -p artifacts
+          find sdk/bin/packages -name "${PKG_NAME}_*.ipk" -exec cp {} artifacts/ \;
+          ls -l artifacts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.ART_NAME }}
+          path: artifacts/
+          if-no-files-found: error

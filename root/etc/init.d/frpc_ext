@@ -63,6 +63,11 @@ server_section_validate() {
 		'alias:string' \
 		'server_addr:host' \
 		'server_port:port' \
+		'tcp_port:port' \
+		'quic_port:port' \
+		'kcp_port:port' \
+		'websocket_port:port' \
+		'wss_port:port' \
 		'token:string'
 }
 
@@ -368,11 +373,20 @@ create_config_file() {
 	fi
 	local first_server_addr="$server_addr"
 	local first_server_port="$server_port"
+	local first_tcp_port="$tcp_port"
+	local first_quic_port="$quic_port"
+	local first_kcp_port="$kcp_port"
+	local first_websocket_port="$websocket_port"
+	local first_wss_port="$wss_port"
 	local first_token="$token"
 
 	# Root keys.
 	_toml_kv_string "$tmp_file" "serverAddr" "$first_server_addr"
-	_toml_kv_int "$tmp_file" "serverPort" "$first_server_port"
+	_toml_kv_int "$tmp_file" "serverPort" "${first_tcp_port:-$first_server_port}"
+	_toml_kv_int "$tmp_file" "quicPort" "$first_quic_port"
+	_toml_kv_int "$tmp_file" "kcpPort" "$first_kcp_port"
+	_toml_kv_int "$tmp_file" "websocketPort" "$first_websocket_port"
+	_toml_kv_int "$tmp_file" "wssPort" "$first_wss_port"
 	_toml_kv_string "$tmp_file" "user" "$user"
 	_toml_kv_bool "$tmp_file" "loginFailExit" "$login_fail_exit"
 	_toml_kv_string "$tmp_file" "dnsServer" "$dns_server"
@@ -405,7 +419,11 @@ create_config_file() {
 			printf "  { name=%s, addr=%s, port=%s" \
 				"$(_toml_quote "$sid")" \
 				"$(_toml_quote "$server_addr")" \
-				"$server_port" >>"$tmp_file"
+				"${tcp_port:-$server_port}" >>"$tmp_file"
+			[ -n "$quic_port" ] && printf ", quicPort=%s" "$quic_port" >>"$tmp_file"
+			[ -n "$kcp_port" ] && printf ", kcpPort=%s" "$kcp_port" >>"$tmp_file"
+			[ -n "$websocket_port" ] && printf ", websocketPort=%s" "$websocket_port" >>"$tmp_file"
+			[ -n "$wss_port" ] && printf ", wssPort=%s" "$wss_port" >>"$tmp_file"
 			[ -n "$token" ] && printf ", token=%s" "$(_toml_quote "$token")" >>"$tmp_file"
 			printf " },\n" >>"$tmp_file"
 		done
